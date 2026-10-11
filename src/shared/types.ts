@@ -9,7 +9,9 @@ export type RemoteCommand =
   | 'play_pause'
   | 'volume_up'
   | 'volume_down'
+  | 'mute'
   | 'power'
+  | 'settings'
   | 'assistant_press'
   | 'assistant_release';
 

@@ -243,7 +243,11 @@ export class GoogleTvAdapter implements DeviceAdapter {
     };
 
     try {
-      const result = await androidTvRemoteBridge.startPairing(device.host, device.macAddress);
+      const result = await androidTvRemoteBridge.startPairing(
+        device.host,
+        device.macAddress,
+        device.pairingPort
+      );
       const nextDevices = devices.map((item) =>
         item.id === device.id
           ? {
@@ -366,6 +370,18 @@ export class GoogleTvAdapter implements DeviceAdapter {
     await androidTvRemoteBridge.sendText(
       this.activeDevice.host,
       text,
+      this.activeDevice.macAddress
+    );
+  }
+
+  async launchApp(appLink: string): Promise<void> {
+    if (!this.activeDevice) {
+      throw new Error('No active device connected.');
+    }
+
+    await androidTvRemoteBridge.sendAppLink(
+      this.activeDevice.host,
+      appLink,
       this.activeDevice.macAddress
     );
   }

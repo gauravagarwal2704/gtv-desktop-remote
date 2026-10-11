@@ -12,6 +12,7 @@ export interface RemoteClientPort {
   connect(commandId?: string): Promise<void>;
   sendCommand(request: CommandDispatchRequest): Promise<void> | void;
   sendText(text: string): Promise<void> | void;
+  sendAppLink(appLink: string): Promise<void> | void;
   startVoiceSession(): Promise<number>;
   sendVoiceChunk(sessionId: number, samples: Buffer): Promise<void> | void;
   stopVoiceSession(sessionId: number): Promise<void> | void;
@@ -113,6 +114,16 @@ export function normalizeRemoteError(error: unknown, fallback: string): Error {
   if (normalized.message.includes('Remote connection timed out.')) {
     return new Error(
       'The TV did not respond on the Android TV Remote port. Make sure the TV is awake and Android TV Remote Service is available, then try pairing again.'
+    );
+  }
+
+  if (
+    /TLS connection (timed out|closed before it became ready)/i.test(normalized.message) ||
+    /timed out waiting for pairing reply/i.test(normalized.message) ||
+    /EHOSTUNREACH|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(normalized.message)
+  ) {
+    return new Error(
+      'Could not reach the TV for pairing on port 6467. Wake the TV, keep it on the same Wi‑Fi (not guest/isolated), wait a few seconds, then try Add again.'
     );
   }
 

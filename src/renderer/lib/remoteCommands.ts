@@ -21,6 +21,8 @@ export const KEYBOARD_COMMAND_MAP: Partial<Record<string, RemoteCommand>> = {
   '=': 'volume_up',
   '-': 'volume_down',
   _: 'volume_down',
+  m: 'mute',
+  M: 'mute',
   p: 'power',
   P: 'power',
 };

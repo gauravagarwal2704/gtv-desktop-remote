@@ -92,7 +92,7 @@ p {
 .ui-frame {
   position: relative;
   width: 360px;
-  height: 720px;
+  height: 880px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -254,10 +254,41 @@ p {
 }
 
 .ui-remote-summary {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 0.65rem;
   padding: 1rem 1.5rem 0.55rem;
+}
+
+.ui-power-float {
+  position: absolute;
+  top: 0.85rem;
+  right: 1.15rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--danger-text);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  transition:
+    transform 150ms ease,
+    filter 120ms ease;
+}
+
+.ui-power-float:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.ui-power-float:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.ui-power-float:disabled {
+  opacity: 0.45;
 }
 
 .ui-title-device {
@@ -647,6 +678,11 @@ p {
   color: var(--danger-text);
 }
 
+.ui-alert-info {
+  background: rgba(61, 90, 254, 0.22);
+  color: var(--text);
+}
+
 .ui-pair-screen {
   flex: 1;
   display: flex;
@@ -741,10 +777,18 @@ p {
 
 .ui-remote-screen {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   color: var(--text);
+}
+
+.ui-remote-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .ui-dpad-wrap {
@@ -911,6 +955,74 @@ p {
   padding: 0.4rem 1.5rem 0.8rem;
 }
 
+.ui-app-section {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ui-app-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.15rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ui-app-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.ui-app-tile {
+  min-height: 4.1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.3rem 0.4rem;
+  border-radius: 0.9rem;
+  background: var(--surface-high);
+  color: var(--text);
+  transition:
+    background 120ms ease,
+    transform 150ms ease;
+}
+
+.ui-app-tile:hover:not(:disabled) {
+  background: var(--surface-bright);
+}
+
+.ui-app-tile:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.ui-app-tile-icon {
+  width: 1.85rem;
+  height: 1.85rem;
+  object-fit: contain;
+  border-radius: 0.35rem;
+  background: transparent;
+}
+
+.ui-app-tile-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 0.2rem;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
 .ui-media-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1047,7 +1159,8 @@ p {
 }
 
 .ui-footer-bar {
-  margin-top: auto;
+  flex: 0 0 auto;
+  margin-top: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.6rem;

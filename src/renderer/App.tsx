@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
 import { downsampleTo8kMono, toBase64 } from '../shared/audio';
 import type {
@@ -20,6 +20,7 @@ import {
   resolveSelectedDevice,
   type DevicePickerSelection as DevicePickerSelectionFromLib,
 } from './lib/deviceSelection';
+import { APP_SHORTCUTS, launchLinksFor, type AppShortcut } from './lib/appShortcuts';
 import { classes, isEditableTarget, sanitizePairCode, shouldRestartPairingFlow } from './lib/pure';
 import { KEYBOARD_COMMAND_MAP } from './lib/remoteCommands';
 
@@ -54,11 +55,13 @@ type IconName =
   | 'back'
   | 'keyboard'
   | 'settings'
+  | 'menu'
   | 'play'
   | 'power'
   | 'volumeUp'
   | 'volumeDown'
   | 'remote'
+  | 'mute'
   | 'assistant';
 
 function getDesktopApi() {
@@ -224,6 +227,14 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
           <path d="M17.48 6.52L19.07 4.93" />
         </svg>
       );
+    case 'menu':
+      return (
+        <svg {...props}>
+          <path d="M4 7H20" />
+          <path d="M4 12H20" />
+          <path d="M4 17H20" />
+        </svg>
+      );
     case 'play':
       return (
         <svg {...props}>
@@ -271,6 +282,14 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
           <circle cx="21.5" cy="7" r="2.1" fill="#34A853" />
         </svg>
       );
+    case 'mute':
+      return (
+        <svg {...props}>
+          <path d="M11 5L6 9H3V15H6L11 19V5Z" />
+          <path d="M22 9L16 15" />
+          <path d="M16 9L22 15" />
+        </svg>
+      );
     default:
       return null;
   }
@@ -306,7 +325,9 @@ function App() {
       ...current,
       deviceState: {
         ...current.deviceState,
-        status: 'error',
+        // Keep the remote screen if we were already connected — a failed key
+        // press must not dump the user back to the device list.
+        status: current.deviceState.status === 'connected' ? 'connected' : 'error',
         message: error.message,
       },
     }));
@@ -378,7 +399,11 @@ function App() {
     ? 'pairing'
     : !devicePickerOpen &&
         currentRemoteDevice &&
-        (isConnected || bootstrap.deviceState.status === 'connecting')
+        (isConnected ||
+          bootstrap.deviceState.status === 'connecting' ||
+          // Stay on remote while recovering from a transient command failure.
+          (Boolean(bootstrap.deviceState.activeDeviceId) &&
+            bootstrap.deviceState.status === 'error'))
       ? 'remote'
       : 'devices';
   const bridgeDisabled = busy || !bridgeReady;
@@ -949,11 +974,6 @@ function App() {
     setBootstrap((current) => ({
       ...current,
       devices,
-      deviceState: {
-        ...current.deviceState,
-        status: 'idle',
-        message: `Saved ${device.name}.`,
-      },
     }));
     setPairingDeviceId(savedDevice.id);
     setSelectedDeviceKey(`saved:${savedDevice.id}`);
@@ -986,10 +1006,26 @@ function App() {
   async function handleSelectDiscoveredDevice(device: DiscoveredDevice) {
     setTextInputOpen(false);
     setPairCode('');
-    setDevicePickerOpen(false);
+    setDevicePickerOpen(true);
     setBusy(true);
+    setBootstrap((current) => ({
+      ...current,
+      deviceState: {
+        ...current.deviceState,
+        status: 'connecting',
+        message: `Requesting pairing code from ${device.name}...`,
+      },
+    }));
     try {
       const savedDevice = await saveDiscoveredDevice(device);
+      setBootstrap((current) => ({
+        ...current,
+        deviceState: {
+          ...current.deviceState,
+          status: 'connecting',
+          message: `Requesting pairing code from ${device.name}...`,
+        },
+      }));
       await startPairingFlow(savedDevice.id);
     } catch (error) {
       setPairingReady(false);
@@ -1105,6 +1141,57 @@ function App() {
         deviceState: {
           ...current.deviceState,
           message: 'Text sent.',
+        },
+      }));
+    } catch (error) {
+      setBootstrap((current) => ({
+        ...current,
+        deviceState: {
+          ...current.deviceState,
+          status: 'error',
+          message: (error as Error).message,
+        },
+      }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleLaunchApp(app: AppShortcut) {
+    setBusy(true);
+    const links = launchLinksFor(app);
+    let lastError: Error | undefined;
+    let launched = false;
+    try {
+      for (let index = 0; index < links.length; index += 1) {
+        const link = links[index];
+        if (!link) {
+          continue;
+        }
+        try {
+          await getDesktopApi().launchApp(link);
+          launched = true;
+          if (!app.tryAllLinks) {
+            break;
+          }
+          if (index < links.length - 1) {
+            await new Promise((resolve) => {
+              window.setTimeout(resolve, 350);
+            });
+          }
+        } catch (error) {
+          lastError = error as Error;
+        }
+      }
+      if (!launched) {
+        throw lastError ?? new Error(`Could not open ${app.label}.`);
+      }
+      setBootstrap((current) => ({
+        ...current,
+        deviceState: {
+          ...current.deviceState,
+          status: current.deviceState.status === 'error' ? 'connected' : current.deviceState.status,
+          message: `Opening ${app.label}...`,
         },
       }));
     } catch (error) {
@@ -1553,8 +1640,15 @@ function App() {
 
             <div className="ui-devices-footer">{updaterPanel}</div>
 
-            {bootstrap.deviceState.status === 'error' || !bridgeReady ? (
-              <div className="ui-alert">
+            {bootstrap.deviceState.status === 'error' ||
+            bootstrap.deviceState.status === 'connecting' ||
+            !bridgeReady ? (
+              <div
+                className={classes(
+                  'ui-alert',
+                  bootstrap.deviceState.status === 'connecting' && 'ui-alert-info'
+                )}
+              >
                 {!bridgeReady ? 'Electron bridge not ready yet.' : bootstrap.deviceState.message}
               </div>
             ) : null}
@@ -1629,10 +1723,21 @@ function App() {
 
         {currentView === 'remote' ? (
           <div className="ui-remote-screen">
+            <div className="ui-remote-body">
             <section className="ui-remote-summary">
               <div className="ui-status-pill">
                 <span>{currentRemoteDeviceName ?? 'Choose Device'}</span>
               </div>
+              <button
+                className="ui-power-float"
+                disabled={remoteDisabled}
+                aria-label="Power"
+                onClick={() => {
+                  handleCommand('power');
+                }}
+              >
+                <Icon name="power" className="h-5 w-5" />
+              </button>
             </section>
 
             {bootstrap.deviceState.status === 'error' ? (
@@ -1832,18 +1937,43 @@ function App() {
                       <Icon name="assistant" className="h-10 w-10" />
                     </button>
                     <button
-                      className="ui-media-button ui-media-danger"
+                      className="ui-media-button"
                       disabled={remoteDisabled}
+                      aria-label="Mute"
                       onClick={() => {
-                        handleCommand('power');
+                        handleCommand('mute');
                       }}
                     >
-                      <Icon name="power" className="h-5 w-5" />
+                      <Icon name="mute" className="h-5 w-5" />
                     </button>
                   </div>
                 </div>
               </div>
+
+              <div className="ui-app-section">
+                <div className="ui-app-heading">
+                  <span>Apps</span>
+                </div>
+                <div className="ui-app-grid">
+                  {APP_SHORTCUTS.map((app) => (
+                    <button
+                      key={app.id}
+                      className="ui-app-tile"
+                      style={{ '--app-accent': app.accent } as CSSProperties}
+                      disabled={remoteDisabled}
+                      aria-label={app.label}
+                      onClick={() => {
+                        void handleLaunchApp(app);
+                      }}
+                    >
+                      <img className="ui-app-tile-icon" src={app.icon} alt="" draggable={false} />
+                      <span className="ui-app-tile-label">{app.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </section>
+            </div>
 
             <footer className="ui-footer-bar">
               <button className="ui-footer-item" disabled={busy} onClick={openDevicePicker}>

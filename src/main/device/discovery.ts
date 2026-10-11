@@ -85,19 +85,34 @@ function runDnsSd(args: string[], timeoutMs: number): Promise<string> {
   });
 }
 
+/**
+ * dns-sd browse columns are space-padded. Short instance names often have only
+ * a single space after the service type (e.g. `_androidtvremote2._tcp. Smart TV Pro`),
+ * so splitting on 2+ spaces incorrectly treats the service type as part of the name.
+ */
+export function parseBrowseInstanceName(line: string, serviceType: string): string | undefined {
+  if (!line.includes(' Add ') || !line.includes(serviceType)) {
+    return undefined;
+  }
+
+  const escaped = serviceType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`${escaped}\\.?\\s+(.+?)\\s*$`).exec(line);
+  const instanceName = match?.[1]?.trim();
+  if (!instanceName || instanceName === '...STARTING...') {
+    return undefined;
+  }
+
+  return instanceName;
+}
+
 async function browseServiceInstances(serviceType: string, timeoutMs = 2500): Promise<string[]> {
   const output = await runDnsSd(['-B', serviceType, 'local.'], timeoutMs);
   const lines = output.split(/\r?\n/);
   const instances = new Set<string>();
 
   for (const line of lines) {
-    if (!line.includes(' Add ') || !line.includes(serviceType)) {
-      continue;
-    }
-
-    const parts = line.trim().split(/\s{2,}/);
-    const instanceName = parts[parts.length - 1]?.trim();
-    if (instanceName && instanceName !== '...STARTING...') {
+    const instanceName = parseBrowseInstanceName(line, serviceType);
+    if (instanceName) {
       instances.add(instanceName);
     }
   }
@@ -263,7 +278,7 @@ export async function discoverGoogleTvDevices(): Promise<DiscoveredDevice[]> {
       networkHostName: existing?.networkHostName ?? service.hostName ?? remoteService?.hostName,
       remotePort: existing?.remotePort ?? remoteService?.port,
       adbPort: connectService?.port,
-      pairingPort: existing?.pairingPort ?? pairService?.port,
+      pairingPort: existing?.pairingPort ?? pairService?.port ?? 6467,
       macAddress: existing?.macAddress ?? remoteService?.txt.bt,
       castDeviceId: service.txt.id || existing?.castDeviceId,
       model: service.txt.md || existing?.model,

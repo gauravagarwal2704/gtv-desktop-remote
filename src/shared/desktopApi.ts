@@ -45,6 +45,7 @@ export interface InvokeMethodMap {
   recordCommandDrop: 'metricsRendererDrop';
   getMetricsSnapshot: 'metricsSnapshot';
   sendText: 'deviceText';
+  launchApp: 'deviceLaunchApp';
   startAssistantVoice: 'deviceAssistantVoiceStart';
   sendAssistantVoiceChunk: 'deviceAssistantVoiceChunk';
   stopAssistantVoice: 'deviceAssistantVoiceStop';

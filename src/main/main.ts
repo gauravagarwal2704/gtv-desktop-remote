@@ -126,7 +126,7 @@ async function createWindow(): Promise<BrowserWindow> {
   const iconImage = applyApplicationIcon();
   const window = new BrowserWindow({
     width: 360,
-    height: 720,
+    height: 880,
     useContentSize: true,
     show: false,
     resizable: false,
@@ -146,7 +146,6 @@ async function createWindow(): Promise<BrowserWindow> {
   if (process.platform === 'darwin') {
     window.setWindowButtonVisibility(false);
   }
-  window.setSkipTaskbar(true);
 
   attachWindowDiagnostics(window);
 
@@ -162,12 +161,6 @@ async function createWindow(): Promise<BrowserWindow> {
   } else {
     await window.loadURL('http://localhost:5173');
   }
-
-  window.on('blur', () => {
-    if (!window.webContents.isDevToolsOpened()) {
-      window.hide();
-    }
-  });
 
   window.on('closed', () => {
     unsubscribeUpdater();
@@ -348,7 +341,7 @@ async function handleManualUpdateCheckFromMenu() {
 async function bootstrapApp() {
   buildApplicationMenu();
   if (process.platform === 'darwin') {
-    app.dock?.hide();
+    app.dock?.show();
     const micGranted = await systemPreferences.askForMediaAccess('microphone');
     if (!micGranted) {
       await logInfo('main', 'Microphone access not granted — voice assistant will be unavailable');
@@ -458,6 +451,12 @@ function registerIpc() {
   ipcMain.handle(
     ch.deviceText,
     captureIpc(ch.deviceText, async (_event: unknown, text: string) => adapter.sendText(text))
+  );
+  ipcMain.handle(
+    ch.deviceLaunchApp,
+    captureIpc(ch.deviceLaunchApp, async (_event: unknown, appLink: string) =>
+      adapter.launchApp(appLink)
+    )
   );
   ipcMain.handle(
     ch.deviceAssistantVoiceStart,

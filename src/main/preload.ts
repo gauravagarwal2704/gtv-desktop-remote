@@ -38,6 +38,8 @@ const api = {
   getMetricsSnapshot: (): Promise<CommandMetricsSnapshot> =>
     ipcRenderer.invoke(INVOKE_CHANNELS.metricsSnapshot),
   sendText: (text: string): Promise<void> => ipcRenderer.invoke(INVOKE_CHANNELS.deviceText, text),
+  launchApp: (appLink: string): Promise<void> =>
+    ipcRenderer.invoke(INVOKE_CHANNELS.deviceLaunchApp, appLink),
   startAssistantVoice: (): Promise<number> =>
     ipcRenderer.invoke(INVOKE_CHANNELS.deviceAssistantVoiceStart),
   sendAssistantVoiceChunk: (sessionId: number, chunkBase64: string): Promise<void> =>

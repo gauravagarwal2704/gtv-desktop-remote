@@ -16,6 +16,11 @@ import {
   type RemoteState,
 } from './androidTvRemote.types';
 import type { PemPair } from './protocol/certificate';
+import { encodeAppLinkLaunchMessage } from './appLinkCodec';
+import { SafeTlsTransport } from './safeTlsTransport';
+
+const PAIRING_CONNECT_TIMEOUT_MS = 20_000;
+const REMOTE_CONNECT_TIMEOUT_MS = 15_000;
 
 interface LibretvRemoteClientInstance {
   close(): Promise<void>;
@@ -56,25 +61,35 @@ type LibretvRemoteMessage =
 
 interface LibretvGoogleModule {
   PairingClient: new (options: {
-    cert: string;
-    clientName: string;
-    host: string;
-    key: string;
-    port: number;
+    cert?: string;
+    clientName?: string;
+    host?: string;
+    key?: string;
+    port?: number;
     rejectUnauthorized?: boolean;
+    timeoutMs?: number;
+    transport?: SafeTlsTransport;
   }) => {
     close(): Promise<void>;
     start(): Promise<unknown>;
     submitCode(code: string): Promise<{ type: string; status?: string }>;
   };
   RemoteClient: new (options: {
-    cert: string;
-    host: string;
-    key: string;
-    port: number;
-    rejectUnauthorized: boolean;
+    cert?: string;
+    host?: string;
+    key?: string;
+    port?: number;
+    rejectUnauthorized?: boolean;
+    timeoutMs?: number;
+    transport?: SafeTlsTransport;
   }) => LibretvRemoteClientInstance;
+  RemoteKeyCodes: Record<string, number>;
 }
+
+/** Android KEYCODE_VOLUME_MUTE — not yet exported by @librecontrol/google-tv. */
+const KEYCODE_VOLUME_MUTE = 164;
+/** Android KEYCODE_SETTINGS — not yet exported by @librecontrol/google-tv. */
+const KEYCODE_SETTINGS = 176;
 
 const COMMAND_TO_LIBRETV_KEY: Record<CommandDispatchRequest['command'], string> = {
   up: 'up',
@@ -87,7 +102,9 @@ const COMMAND_TO_LIBRETV_KEY: Record<CommandDispatchRequest['command'], string> 
   play_pause: 'playPause',
   volume_up: 'volumeUp',
   volume_down: 'volumeDown',
+  mute: 'mute',
   power: 'power',
+  settings: 'settings',
   assistant_press: 'assistant',
   assistant_release: 'assistant',
 };
@@ -95,12 +112,22 @@ const COMMAND_TO_LIBRETV_KEY: Record<CommandDispatchRequest['command'], string> 
 let librecontrolGoogleTvModule: Promise<LibretvGoogleModule> | undefined;
 
 function loadLibretvGoogle(): Promise<LibretvGoogleModule> {
-  librecontrolGoogleTvModule ??= import('@librecontrol/google-tv');
+  librecontrolGoogleTvModule ??= import('@librecontrol/google-tv').then((mod) => {
+    const module = mod as LibretvGoogleModule;
+    if (module.RemoteKeyCodes.mute == null) {
+      module.RemoteKeyCodes.mute = KEYCODE_VOLUME_MUTE;
+    }
+    if (module.RemoteKeyCodes.settings == null) {
+      module.RemoteKeyCodes.settings = KEYCODE_SETTINGS;
+    }
+    return module;
+  });
   return librecontrolGoogleTvModule;
 }
 
 class LibretvGoogleRemoteClient implements RemoteClientPort {
   private client: LibretvRemoteClientInstance | undefined;
+  private transport: SafeTlsTransport | undefined;
   private connectPromise: Promise<void> | undefined;
   private protocolReady = false;
   private activeVoiceSessionId: number | undefined;
@@ -146,6 +173,7 @@ class LibretvGoogleRemoteClient implements RemoteClientPort {
   disconnect(): void {
     const client = this.client;
     this.client = undefined;
+    this.transport = undefined;
     this.protocolReady = false;
     this.activeVoiceSessionId = undefined;
     if (client) {
@@ -169,6 +197,22 @@ class LibretvGoogleRemoteClient implements RemoteClientPort {
 
   async sendText(text: string): Promise<void> {
     await this.requireClient().text(text.trim());
+  }
+
+  async sendAppLink(appLink: string): Promise<void> {
+    const payload = encodeAppLinkLaunchMessage(appLink);
+    await this.connect();
+    try {
+      await this.requireTransport().send(payload);
+    } catch {
+      // Socket may have dropped mid-session — force a fresh connect and retry once.
+      this.protocolReady = false;
+      this.client = undefined;
+      this.transport = undefined;
+      await this.connect();
+      await this.requireTransport().send(payload);
+    }
+    this.state.lastActivityAt = Date.now();
   }
 
   async startVoiceSession(): Promise<number> {
@@ -196,13 +240,19 @@ class LibretvGoogleRemoteClient implements RemoteClientPort {
 
   private async open(commandId?: string): Promise<void> {
     const { RemoteClient } = await loadLibretvGoogle();
-    const client = new RemoteClient({
+    const transport = new SafeTlsTransport({
       cert: this.certs.cert,
       host: this.host,
       key: this.certs.key,
       port: 6466,
       rejectUnauthorized: false,
+      timeoutMs: REMOTE_CONNECT_TIMEOUT_MS,
     });
+    const client = new RemoteClient({
+      cert: this.certs.cert,
+      transport,
+    });
+    this.transport = transport;
     this.client = client;
     client.on('message', (message) => {
       commandMetricsStore.recordInboundMessage(this.host);
@@ -228,6 +278,7 @@ class LibretvGoogleRemoteClient implements RemoteClientPort {
       commandMetricsStore.recordSocketClosed(this.host);
       this.protocolReady = false;
       this.client = undefined;
+      this.transport = undefined;
     });
     client.on('error', (error) => {
       void logError('androidtvremote', 'LibreControl Google TV remote client error', error);
@@ -259,6 +310,13 @@ class LibretvGoogleRemoteClient implements RemoteClientPort {
       throw new Error('Connection has been lost.');
     }
     return this.client;
+  }
+
+  private requireTransport(): SafeTlsTransport {
+    if (!this.transport) {
+      throw new Error('Remote transport is not connected.');
+    }
+    return this.transport;
   }
 }
 
@@ -317,6 +375,13 @@ export class AndroidTvRemoteBridge {
     const session = this.sessions.get(normalizedHost);
 
     session?.remoteClient?.disconnect();
+    if (session?.pairingManager) {
+      try {
+        await session.pairingManager.close();
+      } catch {
+        // Ignore close failures while tearing down a stuck pairing session.
+      }
+    }
     this.sessions.delete(normalizedHost);
 
     if (removeCerts) {
@@ -347,8 +412,17 @@ export class AndroidTvRemoteBridge {
     return session;
   }
 
-  async startPairing(host: string, certKey?: string): Promise<Record<string, unknown> | undefined> {
-    record({ layer: 'pairing', direction: 'call', event: 'startPairing', meta: { host, certKey } });
+  async startPairing(
+    host: string,
+    certKey?: string,
+    pairingPort: number = DEFAULT_PAIRING_PORT
+  ): Promise<Record<string, unknown> | undefined> {
+    record({
+      layer: 'pairing',
+      direction: 'call',
+      event: 'startPairing',
+      meta: { host, certKey, pairingPort },
+    });
     const session = await this.getSession(host, certKey);
 
     if (session.pairingReady) {
@@ -357,22 +431,35 @@ export class AndroidTvRemoteBridge {
     }
 
     const { PairingClient } = await loadLibretvGoogle();
+    const port =
+      Number.isFinite(pairingPort) && pairingPort > 0 ? pairingPort : DEFAULT_PAIRING_PORT;
+    const transport = new SafeTlsTransport({
+      cert: session.certs.cert,
+      host,
+      key: session.certs.key,
+      port,
+      rejectUnauthorized: false,
+      timeoutMs: PAIRING_CONNECT_TIMEOUT_MS,
+    });
     const pairingManager = new PairingClient({
       cert: session.certs.cert,
       clientName: SERVICE_NAME,
-      host,
-      key: session.certs.key,
-      port: DEFAULT_PAIRING_PORT,
-      rejectUnauthorized: false,
+      transport,
+      timeoutMs: PAIRING_CONNECT_TIMEOUT_MS,
     });
 
     session.pairingManager = pairingManager;
     session.pairingReady = pairingManager
       .start()
       .then(() => undefined)
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         session.pairingManager = undefined;
-        throw toError(error, 'Pairing failed.');
+        try {
+          await pairingManager.close();
+        } catch {
+          // Ignore close failures after a failed start.
+        }
+        throw normalizeRemoteError(error, 'Pairing failed.');
       })
       .finally(() => {
         session.pairingReady = undefined;
@@ -444,6 +531,13 @@ export class AndroidTvRemoteBridge {
     for (const session of this.sessions.values()) {
       session.remoteClient?.disconnect();
       session.remoteClient = undefined;
+      if (session.pairingManager) {
+        try {
+          await session.pairingManager.close();
+        } catch {
+          // Ignore close failures during reset.
+        }
+      }
       session.pairingManager = undefined;
       session.pairingReady = undefined;
     }
@@ -491,6 +585,14 @@ export class AndroidTvRemoteBridge {
 
     await session.remoteClient.connect();
     await session.remoteClient.sendText(text);
+  }
+
+  async sendAppLink(host: string, appLink: string, certKey?: string): Promise<void> {
+    const session = await this.getSession(host, certKey);
+    session.remoteClient ??= new LibretvGoogleRemoteClient(host, session.certs);
+
+    await session.remoteClient.connect();
+    await session.remoteClient.sendAppLink(appLink);
   }
 
   async startAssistantVoice(host: string, certKey?: string): Promise<number> {

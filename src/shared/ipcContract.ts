@@ -49,6 +49,7 @@ export const INVOKE_CHANNELS = Object.freeze({
   deviceDisconnect: 'device:disconnect',
   deviceCommand: 'device:command',
   deviceText: 'device:text',
+  deviceLaunchApp: 'device:launchApp',
   deviceCapabilities: 'device:capabilities',
   deviceAssistantVoiceStart: 'device:assistantVoiceStart',
   deviceAssistantVoiceChunk: 'device:assistantVoiceChunk',
@@ -83,6 +84,7 @@ export interface InvokeContract {
   deviceDisconnect: { args: []; res: DeviceState };
   deviceCommand: { args: [CommandDispatchRequest]; res: undefined };
   deviceText: { args: [string]; res: undefined };
+  deviceLaunchApp: { args: [string]; res: undefined };
   deviceCapabilities: { args: []; res: DeviceCapabilities };
   deviceAssistantVoiceStart: { args: []; res: number };
   deviceAssistantVoiceChunk: { args: [number, string]; res: undefined };
